@@ -11,11 +11,27 @@ from pathlib import Path
 
 import chromadb
 
+from .config import MempalaceConfig
+from .embedding import get_embedding_function
+
 logger = logging.getLogger("mempalace_mcp")
 
 
 class SearchError(Exception):
     """Raised when search cannot proceed (e.g. no palace found)."""
+
+
+def _get_search_collection(palace_path: str):
+    """Get collection with the configured embedding function."""
+    config = MempalaceConfig()
+    embedding_fn = get_embedding_function(
+        config.embedding_model, config.embedding_device, config.embedding_dtype
+    )
+    client = chromadb.PersistentClient(path=palace_path)
+    kwargs = {"name": "mempalace_drawers"}
+    if embedding_fn:
+        kwargs["embedding_function"] = embedding_fn
+    return client.get_collection(**kwargs)
 
 
 def search(query: str, palace_path: str, wing: str = None, room: str = None, n_results: int = 5):
@@ -24,8 +40,7 @@ def search(query: str, palace_path: str, wing: str = None, room: str = None, n_r
     Optionally filter by wing (project) or room (aspect).
     """
     try:
-        client = chromadb.PersistentClient(path=palace_path)
-        col = client.get_collection("mempalace_drawers")
+        col = _get_search_collection(palace_path)
     except Exception:
         print(f"\n  No palace found at {palace_path}")
         print("  Run: mempalace init <dir> then mempalace mine <dir>")
@@ -98,8 +113,7 @@ def search_memories(
     Used by the MCP server and other callers that need data.
     """
     try:
-        client = chromadb.PersistentClient(path=palace_path)
-        col = client.get_collection("mempalace_drawers")
+        col = _get_search_collection(palace_path)
     except Exception as e:
         logger.error("No palace found at %s: %s", palace_path, e)
         return {

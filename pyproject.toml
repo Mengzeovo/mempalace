@@ -40,7 +40,8 @@ mempalace = "mempalace:main"
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "pytest-cov>=4.0", "ruff>=0.4.0", "psutil>=5.9"]
 spellcheck = ["autocorrect>=2.0"]
-chinese = ["sentence-transformers>=2.2.0"]
+chinese = ["sentence-transformers>=2.7.0"]
+qwen = ["sentence-transformers>=2.7.0", "transformers>=4.51.0", "torch>=2.0"]
 
 [dependency-groups]
 dev = ["pytest>=7.0", "pytest-cov>=4.0", "ruff>=0.4.0", "psutil>=5.9"]

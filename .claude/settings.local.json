@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "WebSearch",
-      "mcp__web-reader__webReader"
+      "mcp__web-reader__webReader",
+      "Bash(pip show:*)",
+      "Bash(python:*)"
     ]
   }
 }

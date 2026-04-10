@@ -117,22 +117,21 @@ def _get_collection(create=False):
     global _collection_cache
     try:
         from mempalace.embedding import get_embedding_function
-        
+
         client = _get_client()
-        
+        embedding_fn = get_embedding_function(
+            _config.embedding_model, _config.embedding_device, _config.embedding_dtype
+        )
+
+        kwargs = {"name": _config.collection_name}
+        if embedding_fn:
+            kwargs["embedding_function"] = embedding_fn
+
         if create:
-            # Get embedding function from config
-            embedding_fn = get_embedding_function(_config.embedding_model)
-            if embedding_fn:
-                _collection_cache = client.get_or_create_collection(
-                    _config.collection_name,
-                    embedding_function=embedding_fn
-                )
-            else:
-                _collection_cache = client.get_or_create_collection(_config.collection_name)
+            _collection_cache = client.get_or_create_collection(**kwargs)
         elif _collection_cache is None:
-            _collection_cache = client.get_collection(_config.collection_name)
-        
+            _collection_cache = client.get_collection(**kwargs)
+
         return _collection_cache
     except Exception:
         return None

@@ -179,6 +179,16 @@ class MempalaceConfig:
         """Embedding model name for text vectorization."""
         return self._file_config.get("embedding_model", DEFAULT_EMBEDDING_MODEL)
 
+    @property
+    def embedding_device(self):
+        """Device for embedding inference: "cpu", "cuda", "auto", or None."""
+        return self._file_config.get("embedding_device", None)
+
+    @property
+    def embedding_dtype(self):
+        """Data type for embedding model: "float16", "bfloat16", or None."""
+        return self._file_config.get("embedding_dtype", None)
+
     def init(self):
         """Create config directory and write default config.json if it doesn't exist."""
         self._config_dir.mkdir(parents=True, exist_ok=True)

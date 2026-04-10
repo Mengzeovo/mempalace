@@ -38,27 +38,53 @@ def get_collection(palace_path: str, collection_name: str = "mempalace_drawers")
     """Get or create the palace ChromaDB collection."""
     from .config import MempalaceConfig
     from .embedding import get_embedding_function
-    
+
     os.makedirs(palace_path, exist_ok=True)
     try:
         os.chmod(palace_path, 0o700)
     except (OSError, NotImplementedError):
         pass
-    
+
     client = chromadb.PersistentClient(path=palace_path)
-    
-    # Get embedding function from config
+
     config = MempalaceConfig()
-    embedding_fn = get_embedding_function(config.embedding_model)
-    
+    embedding_fn = get_embedding_function(
+        config.embedding_model, config.embedding_device, config.embedding_dtype
+    )
+
+    kwargs = {"name": collection_name}
+    if embedding_fn:
+        kwargs["embedding_function"] = embedding_fn
+
     try:
-        return client.get_collection(collection_name)
+        return client.get_collection(**kwargs)
     except Exception:
-        # Create with custom embedding function if available
         if embedding_fn:
             return client.create_collection(collection_name, embedding_function=embedding_fn)
         else:
             return client.create_collection(collection_name)
+
+
+def open_collection(palace_path: str, collection_name: str = "mempalace_drawers"):
+    """Open an existing palace collection (read-only, no auto-create).
+
+    Raises ValueError if the palace doesn't exist.
+    """
+    from .config import MempalaceConfig
+    from .embedding import get_embedding_function
+
+    client = chromadb.PersistentClient(path=palace_path)
+
+    config = MempalaceConfig()
+    embedding_fn = get_embedding_function(
+        config.embedding_model, config.embedding_device, config.embedding_dtype
+    )
+
+    kwargs = {"name": collection_name}
+    if embedding_fn:
+        kwargs["embedding_function"] = embedding_fn
+
+    return client.get_collection(**kwargs)
 
 
 def file_already_mined(collection, source_file: str, check_mtime: bool = False) -> bool:
