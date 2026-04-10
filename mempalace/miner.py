@@ -394,12 +394,27 @@ def chunk_text(content: str, source_file: str) -> list:
 
 
 def get_collection(palace_path: str):
+    from mempalace.config import MempalaceConfig
+    from mempalace.embedding import get_embedding_function
+    
     os.makedirs(palace_path, exist_ok=True)
     client = chromadb.PersistentClient(path=palace_path)
+    
+    # Get embedding model from config
+    config = MempalaceConfig()
+    embedding_fn = get_embedding_function(config.embedding_model)
+    
     try:
         return client.get_collection("mempalace_drawers")
     except Exception:
-        return client.create_collection("mempalace_drawers")
+        # Create with custom embedding function
+        if embedding_fn:
+            return client.create_collection(
+                "mempalace_drawers",
+                embedding_function=embedding_fn
+            )
+        else:
+            return client.create_collection("mempalace_drawers")
 
 
 def file_already_mined(collection, source_file: str) -> bool:

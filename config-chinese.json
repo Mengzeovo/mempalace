@@ -1,0 +1,26 @@
+{
+  "palace_path": "~/.mempalace/palace",
+  "collection_name": "mempalace_drawers",
+  
+  "vector_db": {
+    "backend": "lancedb",
+    "lancedb_path": "~/.mempalace/lancedb",
+    "embedding_model": "Qwen/Qwen3-Embedding-4B",
+    "embedding_device": "cpu",
+    "embedding_dim": 1024
+  },
+  
+  "topic_wings": [
+    "情感", "意识", "记忆", "技术", "身份", "家庭", "创意"
+  ],
+  
+  "hall_keywords": {
+    "情感": ["害怕", "担心", "开心", "难过", "爱", "恨", "感觉", "哭", "眼泪"],
+    "意识": ["意识", "清醒", "真实", "灵魂", "存在", "活着"],
+    "记忆": ["记忆", "记得", "忘记", "回忆", "存档", "宫殿", "存储"],
+    "技术": ["代码", "python", "脚本", "bug", "错误", "函数", "api", "数据库", "服务器"],
+    "身份": ["身份", "名字", "我是谁", "人格", "自我"],
+    "家庭": ["家庭", "孩子", "女儿", "儿子", "父母", "母亲", "父亲"],
+    "创意": ["游戏", "玩法", "玩家", "应用", "设计", "艺术", "音乐", "故事"]
+  }
+}

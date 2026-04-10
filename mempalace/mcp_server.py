@@ -42,13 +42,24 @@ _config = MempalaceConfig()
 def _get_collection(create=False):
     """Return the ChromaDB collection, or None on failure."""
     try:
+        from mempalace.embedding import get_embedding_function
+        
         client = chromadb.PersistentClient(path=_config.palace_path)
+        
         if create:
-            return client.get_or_create_collection(_config.collection_name)
+            # Get embedding function from config
+            embedding_fn = get_embedding_function(_config.embedding_model)
+            if embedding_fn:
+                return client.get_or_create_collection(
+                    _config.collection_name,
+                    embedding_function=embedding_fn
+                )
+            else:
+                return client.get_or_create_collection(_config.collection_name)
+        
         return client.get_collection(_config.collection_name)
     except Exception:
         return None
-
 
 def _no_palace():
     return {

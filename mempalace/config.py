@@ -10,6 +10,7 @@ from pathlib import Path
 
 DEFAULT_PALACE_PATH = os.path.expanduser("~/.mempalace/palace")
 DEFAULT_COLLECTION_NAME = "mempalace_drawers"
+DEFAULT_EMBEDDING_MODEL = "BAAI/bge-m3"  # 支持中文的默认模型
 
 DEFAULT_TOPIC_WINGS = [
     "emotions",
@@ -122,6 +123,11 @@ class MempalaceConfig:
     def hall_keywords(self):
         """Mapping of hall names to keyword lists."""
         return self._file_config.get("hall_keywords", DEFAULT_HALL_KEYWORDS)
+
+    @property
+    def embedding_model(self):
+        """Embedding model name for text vectorization."""
+        return self._file_config.get("embedding_model", DEFAULT_EMBEDDING_MODEL)
 
     def init(self):
         """Create config directory and write default config.json if it doesn't exist."""
