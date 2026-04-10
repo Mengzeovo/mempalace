@@ -2,6 +2,7 @@
 palace.py — Shared palace operations.
 
 Consolidates ChromaDB access patterns used by both miners and the MCP server.
+Provides process-level caching to avoid redundant client/model initialization.
 """
 
 import os
@@ -33,24 +34,47 @@ SKIP_DIRS = {
     "target",
 }
 
+# ---------------------------------------------------------------------------
+# Process-level cache: keeps one PersistentClient and one embedding function
+# per palace_path to avoid re-creating them on every call.
+# ---------------------------------------------------------------------------
+_client_cache: dict = {}       # palace_path -> chromadb.PersistentClient
+_embedding_fn_cache = None     # shared embedding function (config-driven)
+_embedding_fn_loaded = False   # distinguish None (default) from "not loaded"
+
+
+def _get_client(palace_path: str):
+    """Return a cached PersistentClient for *palace_path*."""
+    if palace_path not in _client_cache:
+        _client_cache[palace_path] = chromadb.PersistentClient(path=palace_path)
+    return _client_cache[palace_path]
+
+
+def _get_embedding_fn():
+    """Return the configured embedding function (cached, lazy-loaded once)."""
+    global _embedding_fn_cache, _embedding_fn_loaded
+    if not _embedding_fn_loaded:
+        from .config import MempalaceConfig
+        from .embedding import get_embedding_function
+
+        config = MempalaceConfig()
+        _embedding_fn_cache = get_embedding_function(
+            config.embedding_model, config.embedding_device, config.embedding_dtype
+        )
+        _embedding_fn_loaded = True
+    return _embedding_fn_cache
+
 
 def get_collection(palace_path: str, collection_name: str = "mempalace_drawers"):
     """Get or create the palace ChromaDB collection."""
-    from .config import MempalaceConfig
-    from .embedding import get_embedding_function
-
     os.makedirs(palace_path, exist_ok=True)
     try:
         os.chmod(palace_path, 0o700)
     except (OSError, NotImplementedError):
         pass
 
-    client = chromadb.PersistentClient(path=palace_path)
-
-    config = MempalaceConfig()
-    embedding_fn = get_embedding_function(
-        config.embedding_model, config.embedding_device, config.embedding_dtype
-    )
+    client = _get_client(palace_path)
+    embedding_fn = _get_embedding_fn()
 
     kwargs = {"name": collection_name}
     if embedding_fn:
@@ -68,23 +92,25 @@ def get_collection(palace_path: str, collection_name: str = "mempalace_drawers")
 def open_collection(palace_path: str, collection_name: str = "mempalace_drawers"):
     """Open an existing palace collection (read-only, no auto-create).
 
-    Raises ValueError if the palace doesn't exist.
+    Raises ValueError if the collection doesn't exist.
     """
-    from .config import MempalaceConfig
-    from .embedding import get_embedding_function
-
-    client = chromadb.PersistentClient(path=palace_path)
-
-    config = MempalaceConfig()
-    embedding_fn = get_embedding_function(
-        config.embedding_model, config.embedding_device, config.embedding_dtype
-    )
+    client = _get_client(palace_path)
+    embedding_fn = _get_embedding_fn()
 
     kwargs = {"name": collection_name}
     if embedding_fn:
         kwargs["embedding_function"] = embedding_fn
 
     return client.get_collection(**kwargs)
+
+
+def get_embedding_function_cached():
+    """Public accessor for the cached embedding function.
+
+    Used by callers that need to call ``encode_query_texts()``
+    with the project-wide embedding function.
+    """
+    return _get_embedding_fn()
 
 
 def file_already_mined(collection, source_file: str, check_mtime: bool = False) -> bool:

@@ -1,9 +1,18 @@
 """Tests for mempalace.layers — Layer0, Layer1, Layer2, Layer3, MemoryStack."""
 
 import os
+import pytest
 from unittest.mock import MagicMock, patch
 
 from mempalace.layers import Layer0, Layer1, Layer2, Layer3, MemoryStack
+
+
+# Layer3 and MemoryStack tests call get_embedding_function_cached() during
+# search.  Return None so encode_query_texts falls back to query_texts.
+@pytest.fixture(autouse=True)
+def _no_embedding_fn():
+    with patch("mempalace.layers.get_embedding_function_cached", return_value=None):
+        yield
 
 
 # ── Layer0 — with identity file ─────────────────────────────────────────

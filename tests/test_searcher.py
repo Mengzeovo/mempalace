@@ -56,10 +56,11 @@ class TestSearchMemories:
         """search_memories returns error dict when query raises."""
         mock_col = MagicMock()
         mock_col.query.side_effect = RuntimeError("query failed")
-        mock_client = MagicMock()
-        mock_client.get_collection.return_value = mock_col
 
-        with patch("mempalace.searcher.chromadb.PersistentClient", return_value=mock_client):
+        with (
+            patch("mempalace.searcher.open_collection", return_value=mock_col),
+            patch("mempalace.searcher.get_embedding_function_cached", return_value=None),
+        ):
             result = search_memories("test", "/fake/path")
         assert "error" in result
         assert "query failed" in result["error"]
@@ -111,10 +112,11 @@ class TestSearchCLI:
         """search raises SearchError when query fails."""
         mock_col = MagicMock()
         mock_col.query.side_effect = RuntimeError("boom")
-        mock_client = MagicMock()
-        mock_client.get_collection.return_value = mock_col
 
-        with patch("mempalace.searcher.chromadb.PersistentClient", return_value=mock_client):
+        with (
+            patch("mempalace.searcher.open_collection", return_value=mock_col),
+            patch("mempalace.searcher.get_embedding_function_cached", return_value=None),
+        ):
             with pytest.raises(SearchError, match="Search error"):
                 search("test", "/fake/path")
 

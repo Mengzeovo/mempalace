@@ -116,7 +116,7 @@ def _get_collection(create=False):
     """Return the ChromaDB collection, caching the client between calls."""
     global _collection_cache
     try:
-        from mempalace.embedding import get_embedding_function
+        from mempalace.embedding import get_embedding_function, encode_query_texts
 
         client = _get_client()
         embedding_fn = get_embedding_function(
@@ -271,11 +271,22 @@ def tool_check_duplicate(content: str, threshold: float = 0.9):
     if not col:
         return _no_palace()
     try:
-        results = col.query(
-            query_texts=[content],
-            n_results=5,
-            include=["metadatas", "documents", "distances"],
-        )
+        # Use query instruction prefix when available
+        from mempalace.embedding import encode_query_texts
+        from mempalace.palace import get_embedding_function_cached
+        embedding_fn = get_embedding_function_cached()
+        query_vectors = encode_query_texts([content], embedding_fn)
+
+        query_kwargs = {
+            "n_results": 5,
+            "include": ["metadatas", "documents", "distances"],
+        }
+        if query_vectors is not None:
+            query_kwargs["query_embeddings"] = query_vectors
+        else:
+            query_kwargs["query_texts"] = [content]
+
+        results = col.query(**query_kwargs)
         duplicates = []
         if results["ids"] and results["ids"][0]:
             for i, drawer_id in enumerate(results["ids"][0]):

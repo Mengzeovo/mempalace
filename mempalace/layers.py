@@ -22,7 +22,8 @@ from pathlib import Path
 from collections import defaultdict
 
 from .config import MempalaceConfig
-from .palace import open_collection
+from .palace import open_collection, get_embedding_function_cached
+from .embedding import encode_query_texts
 
 
 # ---------------------------------------------------------------------------
@@ -269,11 +270,17 @@ class Layer3:
         elif room:
             where = {"room": room}
 
+        embedding_fn = get_embedding_function_cached()
+        query_vectors = encode_query_texts([query], embedding_fn)
+
         kwargs = {
-            "query_texts": [query],
             "n_results": n_results,
             "include": ["documents", "metadatas", "distances"],
         }
+        if query_vectors is not None:
+            kwargs["query_embeddings"] = query_vectors
+        else:
+            kwargs["query_texts"] = [query]
         if where:
             kwargs["where"] = where
 
@@ -324,11 +331,17 @@ class Layer3:
         elif room:
             where = {"room": room}
 
+        embedding_fn = get_embedding_function_cached()
+        query_vectors = encode_query_texts([query], embedding_fn)
+
         kwargs = {
-            "query_texts": [query],
             "n_results": n_results,
             "include": ["documents", "metadatas", "distances"],
         }
+        if query_vectors is not None:
+            kwargs["query_embeddings"] = query_vectors
+        else:
+            kwargs["query_texts"] = [query]
         if where:
             kwargs["where"] = where
 

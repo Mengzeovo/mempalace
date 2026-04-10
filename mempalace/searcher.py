@@ -9,10 +9,8 @@ Returns verbatim text — the actual words, never summaries.
 import logging
 from pathlib import Path
 
-import chromadb
-
-from .config import MempalaceConfig
-from .embedding import get_embedding_function
+from .palace import open_collection, get_embedding_function_cached
+from .embedding import encode_query_texts
 
 logger = logging.getLogger("mempalace_mcp")
 
@@ -21,17 +19,32 @@ class SearchError(Exception):
     """Raised when search cannot proceed (e.g. no palace found)."""
 
 
-def _get_search_collection(palace_path: str):
-    """Get collection with the configured embedding function."""
-    config = MempalaceConfig()
-    embedding_fn = get_embedding_function(
-        config.embedding_model, config.embedding_device, config.embedding_dtype
-    )
-    client = chromadb.PersistentClient(path=palace_path)
-    kwargs = {"name": "mempalace_drawers"}
-    if embedding_fn:
-        kwargs["embedding_function"] = embedding_fn
-    return client.get_collection(**kwargs)
+def _build_query_kwargs(query: str, n_results: int, where: dict):
+    """Build ChromaDB .query() kwargs, using query_embeddings when available.
+
+    When a custom embedding function with ``encode_queries`` is configured,
+    we generate query vectors ourselves so that the instruction prefix is
+    applied.  Otherwise we let ChromaDB handle it via ``query_texts``.
+    """
+    embedding_fn = get_embedding_function_cached()
+    query_vectors = encode_query_texts([query], embedding_fn)
+
+    kwargs = {
+        "n_results": n_results,
+        "include": ["documents", "metadatas", "distances"],
+    }
+
+    if query_vectors is not None:
+        # Use pre-computed query embeddings (with instruction prefix)
+        kwargs["query_embeddings"] = query_vectors
+    else:
+        # Let ChromaDB encode queries with its default embedding
+        kwargs["query_texts"] = [query]
+
+    if where:
+        kwargs["where"] = where
+
+    return kwargs
 
 
 def search(query: str, palace_path: str, wing: str = None, room: str = None, n_results: int = 5):
@@ -40,7 +53,7 @@ def search(query: str, palace_path: str, wing: str = None, room: str = None, n_r
     Optionally filter by wing (project) or room (aspect).
     """
     try:
-        col = _get_search_collection(palace_path)
+        col = open_collection(palace_path)
     except Exception:
         print(f"\n  No palace found at {palace_path}")
         print("  Run: mempalace init <dir> then mempalace mine <dir>")
@@ -56,14 +69,7 @@ def search(query: str, palace_path: str, wing: str = None, room: str = None, n_r
         where = {"room": room}
 
     try:
-        kwargs = {
-            "query_texts": [query],
-            "n_results": n_results,
-            "include": ["documents", "metadatas", "distances"],
-        }
-        if where:
-            kwargs["where"] = where
-
+        kwargs = _build_query_kwargs(query, n_results, where)
         results = col.query(**kwargs)
 
     except Exception as e:
@@ -113,7 +119,7 @@ def search_memories(
     Used by the MCP server and other callers that need data.
     """
     try:
-        col = _get_search_collection(palace_path)
+        col = open_collection(palace_path)
     except Exception as e:
         logger.error("No palace found at %s: %s", palace_path, e)
         return {
@@ -131,14 +137,7 @@ def search_memories(
         where = {"room": room}
 
     try:
-        kwargs = {
-            "query_texts": [query],
-            "n_results": n_results,
-            "include": ["documents", "metadatas", "distances"],
-        }
-        if where:
-            kwargs["where"] = where
-
+        kwargs = _build_query_kwargs(query, n_results, where)
         results = col.query(**kwargs)
     except Exception as e:
         return {"error": f"Search error: {e}"}
@@ -164,3 +163,4 @@ def search_memories(
         "filters": {"wing": wing, "room": room},
         "results": hits,
     }
+

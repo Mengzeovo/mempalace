@@ -359,6 +359,9 @@ def cmd_compress(args):
     # Store compressed versions (unless dry-run)
     if not args.dry_run:
         try:
+            # The compressed collection is a separate storage target that does
+            # NOT need the custom embedding function — it stores pre-compressed
+            # text, not searchable vectors.  We use chromadb directly here.
             import chromadb as _chromadb
             _client = _chromadb.PersistentClient(path=palace_path)
             comp_col = _client.get_or_create_collection("mempalace_compressed")

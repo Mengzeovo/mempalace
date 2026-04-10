@@ -156,6 +156,24 @@ def get_embedding_function(
         return None
 
 
+def encode_query_texts(
+    queries: Documents, embedding_fn: Optional[EmbeddingFunction],
+) -> Optional[Embeddings]:
+    """Encode query texts using the instruction-aware path when available.
+
+    Returns embeddings list if a custom embedding function with
+    ``encode_queries`` is provided, otherwise *None* so the caller
+    can fall back to ChromaDB's built-in ``query_texts`` parameter.
+    """
+    if embedding_fn is None:
+        # ChromaDB default embedding — let ChromaDB handle it internally
+        return None
+    if hasattr(embedding_fn, "encode_queries"):
+        return embedding_fn.encode_queries(queries)
+    # Custom embedding function without encode_queries — use normal path
+    return embedding_fn(queries)
+
+
 # Recommended models for different use cases
 RECOMMENDED_MODELS = {
     "chinese": "BAAI/bge-m3",
