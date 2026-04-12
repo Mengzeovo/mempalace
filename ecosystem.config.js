@@ -4,8 +4,8 @@ module.exports = {
     // MemPalace MCP 服务器
     {
       name: "mempalace-mcp",
-      script: process.platform === "win32" ? ".venv/Scripts/python.exe" : ".venv/bin/python",
-      args: "-m mempalace.mcp_server",
+      script: process.platform === "win32" ? ".venv/Scripts/pythonw.exe" : ".venv/bin/python",
+      args: "-m mempalace.mcp_server --port 8001",
       cwd: process.cwd(),
       interpreter: "none",
       watch: false,

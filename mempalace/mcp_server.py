@@ -45,6 +45,11 @@ def _parse_args():
         metavar="PATH",
         help="Path to the palace directory (overrides config file and env var)",
     )
+    parser.add_argument(
+        "--port",
+        type=int,
+        help="Run as HTTP SSE server on the given port (e.g. 8000). If not set, uses stdio transport.",
+    )
     args, unknown = parser.parse_known_args()
     if unknown:
         logger.debug("Ignoring unknown args: %s", unknown)
@@ -942,8 +947,12 @@ def handle_request(request):
     }
 
 
-def main():
-    logger.info("MemPalace MCP Server starting...")
+
+# ==================== MCP PROTOCOL INTERFACE ====================
+
+def run_stdio():
+    # Helper to execute legacy handle_request mapping
+    logger.info("MemPalace MCP Server starting on stdio...")
     while True:
         try:
             line = sys.stdin.readline()
@@ -962,6 +971,84 @@ def main():
         except Exception as e:
             logger.error(f"Server error: {e}")
 
+def run_sse(port: int):
+    # Dynamic import so dependencies are only needed if HTTP is used
+    import uvicorn
+    import starlette.applications
+    import starlette.routing
+    from mcp.server import Server
+    from mcp.server.sse import SseServerTransport
+    from mcp.types import Tool as MCPTool, TextContent
+    from starlette.middleware.cors import CORSMiddleware
+
+    mcp_server = Server("mempalace")
+
+    @mcp_server.list_tools()
+    async def handle_list_tools() -> list[MCPTool]:
+        return [
+            MCPTool(
+                name=name,
+                description=t["description"],
+                inputSchema=t["input_schema"]
+            ) for name, t in TOOLS.items()
+        ]
+
+    @mcp_server.call_tool()
+    async def handle_call_tool(name: str, arguments: dict | None) -> list[TextContent]:
+        if name not in TOOLS:
+            raise ValueError(f"Unknown tool: {name}")
+        
+        tool_args = arguments or {}
+        schema_props = TOOLS[name]["input_schema"].get("properties", {})
+        for key, value in list(tool_args.items()):
+            prop_schema = schema_props.get(key, {})
+            declared_type = prop_schema.get("type")
+            if declared_type == "integer" and not isinstance(value, int):
+                tool_args[key] = int(value)
+            elif declared_type == "number" and not isinstance(value, (int, float)):
+                tool_args[key] = float(value)
+                
+        try:
+            result = TOOLS[name]["handler"](**tool_args)
+            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+        except Exception as e:
+            logger.exception(f"Tool error in {name}")
+            raise ValueError(str(e))
+
+    sse = SseServerTransport("/messages")
+
+    async def handle_sse(request):
+        async with sse.connect_sse(
+            request.scope, request.receive, request._send
+        ) as streams:
+            await mcp_server.run(
+                streams[0], streams[1], mcp_server.create_initialization_options()
+            )
+
+    async def handle_messages(request):
+        await sse.handle_post_message(request.scope, request.receive, request._send)
+
+    app = starlette.applications.Starlette(debug=False, routes=[
+        starlette.routing.Route("/sse", endpoint=handle_sse),
+        starlette.routing.Route("/messages", endpoint=handle_messages, methods=["POST"])
+    ])
+    
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    logger.info(f"MemPalace MCP Server (SSE) starting on port {port}...")
+    uvicorn.run(app, host="0.0.0.0", port=port)
+
+
+def main():
+    if getattr(_args, "port", None):
+        run_sse(_args.port)
+    else:
+        run_stdio()
 
 if __name__ == "__main__":
     main()
