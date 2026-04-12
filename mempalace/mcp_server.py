@@ -973,6 +973,7 @@ def run_stdio():
 
 def run_sse(port: int):
     # Dynamic import so dependencies are only needed if HTTP is used
+    import asyncio
     import uvicorn
     import starlette.applications
     import starlette.routing
@@ -980,6 +981,8 @@ def run_sse(port: int):
     from mcp.server.sse import SseServerTransport
     from mcp.types import Tool as MCPTool, TextContent
     from starlette.middleware.cors import CORSMiddleware
+    from starlette.requests import Request
+    from starlette.responses import JSONResponse, StreamingResponse
 
     mcp_server = Server("mempalace")
 
@@ -1028,9 +1031,97 @@ def run_sse(port: int):
     async def handle_messages(request):
         await sse.handle_post_message(request.scope, request.receive, request._send)
 
+    # ==================== REST API 端点 ====================
+    # 供 Obsidian 插件等 GUI 通过 HTTP 触发 init / mine 操作
+
+    async def api_health(request: Request):
+        """健康检查端点。"""
+        col = _get_collection()
+        return JSONResponse({
+            "status": "ok",
+            "version": __version__,
+            "palace_path": _config.palace_path,
+            "drawers": col.count() if col else 0,
+        })
+
+    async def _run_subprocess_streaming(cmd: list[str], cwd: str | None = None):
+        """在子进程中执行命令，逐行 yield 输出（用于 StreamingResponse）。"""
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            cwd=cwd,
+            env={**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8"},
+        )
+        async for line in proc.stdout:
+            yield line.decode("utf-8", errors="replace")
+        await proc.wait()
+        yield f"\n__EXIT_CODE__:{proc.returncode}\n"
+
+    async def api_init(request: Request):
+        """
+        POST /api/init
+        Body: {"dir": "/path/to/project"}
+        
+        对目标目录执行 mempalace init --yes，流式返回执行日志。
+        """
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+
+        target_dir = body.get("dir", "")
+        if not target_dir:
+            return JSONResponse({"error": "Missing 'dir' field"}, status_code=400)
+        if not os.path.isdir(target_dir):
+            return JSONResponse({"error": f"Directory not found: {target_dir}"}, status_code=400)
+
+        # 使用当前进程的 Python 解释器（即 .venv 里的 python）
+        python_exe = sys.executable
+        cmd = [python_exe, "-m", "mempalace", "init", target_dir, "--yes"]
+
+        logger.info(f"API init: {' '.join(cmd)}")
+        return StreamingResponse(
+            _run_subprocess_streaming(cmd),
+            media_type="text/plain; charset=utf-8",
+        )
+
+    async def api_mine(request: Request):
+        """
+        POST /api/mine
+        Body: {"dir": "/path/to/project", "mode": "projects"}
+        
+        对目标目录执行 mempalace mine，流式返回执行日志。
+        """
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+
+        target_dir = body.get("dir", "")
+        if not target_dir:
+            return JSONResponse({"error": "Missing 'dir' field"}, status_code=400)
+        if not os.path.isdir(target_dir):
+            return JSONResponse({"error": f"Directory not found: {target_dir}"}, status_code=400)
+
+        mode = body.get("mode", "projects")
+        python_exe = sys.executable
+        cmd = [python_exe, "-m", "mempalace", "mine", target_dir, "--mode", mode]
+
+        logger.info(f"API mine: {' '.join(cmd)}")
+        return StreamingResponse(
+            _run_subprocess_streaming(cmd),
+            media_type="text/plain; charset=utf-8",
+        )
+
     app = starlette.applications.Starlette(debug=False, routes=[
+        # MCP SSE transport
         starlette.routing.Route("/sse", endpoint=handle_sse),
-        starlette.routing.Route("/messages", endpoint=handle_messages, methods=["POST"])
+        starlette.routing.Route("/messages", endpoint=handle_messages, methods=["POST"]),
+        # REST API
+        starlette.routing.Route("/api/health", endpoint=api_health),
+        starlette.routing.Route("/api/init", endpoint=api_init, methods=["POST"]),
+        starlette.routing.Route("/api/mine", endpoint=api_mine, methods=["POST"]),
     ])
     
     app.add_middleware(
