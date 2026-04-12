@@ -83,7 +83,7 @@ class SentenceTransformerEmbedding(EmbeddingFunction[Documents]):
             self._model_name,
             device=device,
             model_kwargs=model_kwargs,
-            tokenizer_kwargs={"padding_side": "left"} if self._model_name in _LARGE_MODELS else {},
+            processor_kwargs={"padding_side": "left"} if self._model_name in _LARGE_MODELS else {},
         )
         logger.info("Embedding model loaded: %s", self._model_name)
 

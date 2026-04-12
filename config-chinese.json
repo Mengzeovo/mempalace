@@ -7,7 +7,7 @@
     "lancedb_path": "~/.mempalace/lancedb",
     "embedding_model": "Qwen/Qwen3-Embedding-4B",
     "embedding_device": "cpu",
-    "embedding_dim": 1024
+    "embedding_dim": 2560
   },
   
   "topic_wings": [
