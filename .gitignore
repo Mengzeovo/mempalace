@@ -48,7 +48,11 @@ Thumbs.db
 
 # Testing
 .pytest_cache/
+.pytest_tmp/
 .coverage
 htmlcov/
 mempal.yaml
 .a5c/
+
+# CodeBuddy
+.codebuddy/
