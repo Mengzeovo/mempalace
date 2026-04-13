@@ -104,7 +104,8 @@ def test_cmd_hook_calls_run_hook():
 
 @patch("mempalace.cli.MempalaceConfig")
 def test_cmd_init_no_entities(mock_config_cls, tmp_path):
-    args = argparse.Namespace(dir=str(tmp_path), yes=True)
+    mock_config_cls.return_value.llm_config = {}
+    args = argparse.Namespace(dir=str(tmp_path), yes=True, llm=False, local=False)
     with (
         patch("mempalace.entity_detector.scan_for_detection", return_value=[]),
         patch("mempalace.room_detector_local.detect_rooms_local") as mock_rooms,
@@ -116,10 +117,11 @@ def test_cmd_init_no_entities(mock_config_cls, tmp_path):
 
 @patch("mempalace.cli.MempalaceConfig")
 def test_cmd_init_with_entities(mock_config_cls, tmp_path):
+    mock_config_cls.return_value.llm_config = {}
     fake_files = [tmp_path / "a.txt"]
     detected = {"people": [{"name": "Alice"}], "projects": [], "uncertain": []}
     confirmed = {"people": ["Alice"], "projects": []}
-    args = argparse.Namespace(dir=str(tmp_path), yes=True)
+    args = argparse.Namespace(dir=str(tmp_path), yes=True, llm=False, local=False)
     with (
         patch("mempalace.entity_detector.scan_for_detection", return_value=fake_files),
         patch("mempalace.entity_detector.detect_entities", return_value=detected),
@@ -133,9 +135,10 @@ def test_cmd_init_with_entities(mock_config_cls, tmp_path):
 @patch("mempalace.cli.MempalaceConfig")
 def test_cmd_init_with_entities_zero_total(mock_config_cls, tmp_path, capsys):
     """When entities detected but total is 0, prints 'No entities' message."""
+    mock_config_cls.return_value.llm_config = {}
     fake_files = [tmp_path / "a.txt"]
     detected = {"people": [], "projects": [], "uncertain": []}
-    args = argparse.Namespace(dir=str(tmp_path), yes=False)
+    args = argparse.Namespace(dir=str(tmp_path), yes=False, llm=False, local=False)
     with (
         patch("mempalace.entity_detector.scan_for_detection", return_value=fake_files),
         patch("mempalace.entity_detector.detect_entities", return_value=detected),
@@ -144,6 +147,61 @@ def test_cmd_init_with_entities_zero_total(mock_config_cls, tmp_path, capsys):
         cmd_init(args)
     out = capsys.readouterr().out
     assert "No entities detected" in out
+
+
+@patch("mempalace.cli.MempalaceConfig")
+def test_cmd_init_auto_uses_llm_when_configured(mock_config_cls, tmp_path):
+    mock_config_cls.return_value.llm_config = {"api_key": "sk-test"}
+    args = argparse.Namespace(dir=str(tmp_path), yes=True, llm=False, local=False)
+    with (
+        patch("mempalace.llm_detector.detect_rooms_llm") as mock_llm,
+        patch("mempalace.entity_detector.scan_for_detection") as mock_scan,
+        patch("mempalace.room_detector_local.detect_rooms_local") as mock_rooms,
+    ):
+        cmd_init(args)
+    mock_llm.assert_called_once_with(project_dir=str(tmp_path), yes=True)
+    mock_scan.assert_not_called()
+    mock_rooms.assert_not_called()
+
+
+@patch("mempalace.cli.MempalaceConfig")
+def test_cmd_init_auto_llm_falls_back_to_local(mock_config_cls, tmp_path, capsys):
+    mock_config_cls.return_value.llm_config = {"api_key": "sk-test"}
+    args = argparse.Namespace(dir=str(tmp_path), yes=True, llm=False, local=False)
+    with (
+        patch("mempalace.llm_detector.detect_rooms_llm", side_effect=SystemExit(1)) as mock_llm,
+        patch("mempalace.entity_detector.scan_for_detection", return_value=[]),
+        patch("mempalace.room_detector_local.detect_rooms_local") as mock_rooms,
+    ):
+        cmd_init(args)
+    out = capsys.readouterr().out
+    assert "falling back to local detection" in out
+    mock_llm.assert_called_once_with(project_dir=str(tmp_path), yes=True)
+    mock_rooms.assert_called_once_with(project_dir=str(tmp_path), yes=True)
+
+
+@patch("mempalace.cli.MempalaceConfig")
+def test_cmd_init_local_flag_disables_auto_llm(mock_config_cls, tmp_path):
+    mock_config_cls.return_value.llm_config = {"api_key": "sk-test"}
+    args = argparse.Namespace(dir=str(tmp_path), yes=True, llm=False, local=True)
+    with (
+        patch("mempalace.llm_detector.detect_rooms_llm") as mock_llm,
+        patch("mempalace.entity_detector.scan_for_detection", return_value=[]),
+        patch("mempalace.room_detector_local.detect_rooms_local") as mock_rooms,
+    ):
+        cmd_init(args)
+    mock_llm.assert_not_called()
+    mock_rooms.assert_called_once_with(project_dir=str(tmp_path), yes=True)
+
+
+@patch("mempalace.cli.MempalaceConfig")
+def test_cmd_init_force_llm_does_not_fallback(mock_config_cls, tmp_path):
+    mock_config_cls.return_value.llm_config = {}
+    args = argparse.Namespace(dir=str(tmp_path), yes=True, llm=True, local=False)
+    with patch("mempalace.llm_detector.detect_rooms_llm", side_effect=SystemExit(1)):
+        with pytest.raises(SystemExit) as exc_info:
+            cmd_init(args)
+    assert exc_info.value.code == 1
 
 
 # ── cmd_mine ───────────────────────────────────────────────────────────
@@ -298,6 +356,17 @@ def test_main_init_dispatches():
     ):
         main()
         mock_cmd.assert_called_once()
+
+
+def test_main_init_parses_local_flag():
+    with (
+        patch("sys.argv", ["mempalace", "init", "/some/dir", "--local"]),
+        patch("mempalace.cli.cmd_init") as mock_cmd,
+    ):
+        main()
+        parsed_args = mock_cmd.call_args.args[0]
+        assert parsed_args.local is True
+        assert parsed_args.llm is False
 
 
 def test_main_mine_dispatches():

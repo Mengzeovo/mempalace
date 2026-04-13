@@ -37,13 +37,22 @@ from .config import MempalaceConfig
 from .palace import open_collection
 
 
-def cmd_init(args):
+def _has_configured_llm(config: MempalaceConfig) -> bool:
+    """Return True when a usable LLM API key is configured."""
+    llm_cfg = getattr(config, "llm_config", {})
+    if not isinstance(llm_cfg, dict):
+        return False
+    api_key = llm_cfg.get("api_key", "")
+    return isinstance(api_key, str) and bool(api_key.strip())
+
+
+def _run_local_init(args, config: MempalaceConfig) -> None:
+    """Run the original local-first init flow."""
     import json
     from pathlib import Path
     from .entity_detector import scan_for_detection, detect_entities, confirm_entities
     from .room_detector_local import detect_rooms_local
 
-    # Pass 1: auto-detect people and projects from file content
     print(f"\n  Scanning for entities in: {args.dir}")
     files = scan_for_detection(args.dir)
     if files:
@@ -61,9 +70,31 @@ def cmd_init(args):
         else:
             print("  No entities detected — proceeding with directory-based rooms.")
 
-    # Pass 2: detect rooms from folder structure
     detect_rooms_local(project_dir=args.dir, yes=getattr(args, "yes", False))
-    MempalaceConfig().init()
+    config.init()
+
+
+def cmd_init(args):
+    config = MempalaceConfig()
+    force_llm = getattr(args, "llm", False)
+    force_local = getattr(args, "local", False)
+    auto_llm_available = _has_configured_llm(config)
+
+    if not force_local and (force_llm or auto_llm_available):
+        from .llm_detector import detect_rooms_llm
+
+        if force_llm:
+            detect_rooms_llm(project_dir=args.dir, yes=getattr(args, "yes", False))
+            return
+
+        print("\n  Detected LLM config — using LLM-powered init automatically.")
+        try:
+            detect_rooms_llm(project_dir=args.dir, yes=getattr(args, "yes", False))
+            return
+        except SystemExit:
+            print("  LLM init unavailable — falling back to local detection.")
+
+    _run_local_init(args, config)
 
 
 def cmd_mine(args):
@@ -405,10 +436,26 @@ def main():
     sub = parser.add_subparsers(dest="command")
 
     # init
-    p_init = sub.add_parser("init", help="Detect rooms from your folder structure")
+    p_init = sub.add_parser(
+        "init",
+        help="Set up rooms automatically (uses LLM if configured, otherwise local detection)",
+    )
     p_init.add_argument("dir", help="Project directory to set up")
     p_init.add_argument(
         "--yes", action="store_true", help="Auto-accept all detected entities (non-interactive)"
+    )
+    p_init.add_argument(
+        "--llm",
+        action="store_true",
+        help=(
+            "Force LLM-powered init "
+            "(requires `pip install mempalace[llm]` and LLM config in ~/.mempalace/config.json)"
+        ),
+    )
+    p_init.add_argument(
+        "--local",
+        action="store_true",
+        help="Force local directory-based init even when LLM config is present",
     )
 
     # mine

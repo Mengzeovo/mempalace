@@ -16,7 +16,12 @@ from pathlib import Path
 # in file paths, SQLite, or ChromaDB metadata.
 
 MAX_NAME_LENGTH = 128
-_SAFE_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_ .'-]{0,126}[a-zA-Z0-9]?$")
+_SAFE_NAME_RE = re.compile(
+    r"^[\w\u4e00-\u9fff\u3400-\u4dbf]"  # 首字符：字母/数字/下划线/CJK统一汉字/扩展A区
+    r"[\w\u4e00-\u9fff\u3400-\u4dbf _.'-]{0,126}"  # 中间字符（含空格、点、单引号、连字符）
+    r"[\w\u4e00-\u9fff\u3400-\u4dbf]?$",  # 末字符（可选）
+    re.UNICODE,
+)
 
 
 def sanitize_name(value: str, field_name: str = "name") -> str:
@@ -60,7 +65,7 @@ def sanitize_content(value: str, max_length: int = 100_000) -> str:
 
 DEFAULT_PALACE_PATH = os.path.expanduser("~/.mempalace/palace")
 DEFAULT_COLLECTION_NAME = "mempalace_drawers"
-DEFAULT_EMBEDDING_MODEL = "BAAI/bge-m3"  # 支持中文的默认模型
+DEFAULT_EMBEDDING_MODEL = "Qwen/Qwen3-Embedding-4B"  # 支持中文语义的默认模型
 
 DEFAULT_TOPIC_WINGS = [
     "emotions",
@@ -223,3 +228,19 @@ class MempalaceConfig:
         with open(self._people_map_file, "w") as f:
             json.dump(people_map, f, indent=2)
         return self._people_map_file
+
+    @property
+    def llm_config(self) -> dict:
+        """LLM config dict: api_key, base_url, model.
+
+        Load order: env vars > config file > empty dict.
+        Env vars: MEMPALACE_LLM_API_KEY, MEMPALACE_LLM_BASE_URL, MEMPALACE_LLM_MODEL
+        """
+        cfg = dict(self._file_config.get("llm", {}))
+        if api_key := os.environ.get("MEMPALACE_LLM_API_KEY"):
+            cfg["api_key"] = api_key
+        if base_url := os.environ.get("MEMPALACE_LLM_BASE_URL"):
+            cfg["base_url"] = base_url
+        if model := os.environ.get("MEMPALACE_LLM_MODEL"):
+            cfg["model"] = model
+        return cfg
