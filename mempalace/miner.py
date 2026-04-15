@@ -264,7 +264,7 @@ def load_config(project_dir: str) -> dict:
             print(f"ERROR: No mempalace.yaml found in {project_dir}")
             print(f"Run: mempalace init {project_dir}")
             sys.exit(1)
-    with open(config_path) as f:
+    with open(config_path, encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 
@@ -540,7 +540,81 @@ def mine(
     project_path = Path(project_dir).expanduser().resolve()
     config = load_config(project_dir)
 
-    wing = wing_override or config["wing"]
+    # ------------------------------------------------------------------
+    # Multi-wing manifest branch
+    # ------------------------------------------------------------------
+    if config.get("mode") == "multi_wing":
+        if wing_override:
+            print(
+                "ERROR: --wing cannot be used with a multi-wing manifest.\n"
+                f"  Run `mempalace mine <branch_dir>` for an individual branch."
+            )
+            sys.exit(1)
+
+        branches = config.get("branches") or []
+        if not branches:
+            print("ERROR: multi_wing manifest contains no branches.")
+            sys.exit(1)
+
+        # Validate branch paths
+        branch_paths: list[Path] = []
+        for b in branches:
+            rel = (b.get("path") or "").strip()
+            if not rel:
+                print(f"ERROR: branch entry has empty path: {b}")
+                sys.exit(1)
+            abs_branch = (project_path / rel).resolve()
+            try:
+                abs_branch.relative_to(project_path)
+            except ValueError:
+                print(f"ERROR: branch path escapes root: {rel!r}")
+                sys.exit(1)
+            if abs_branch == project_path:
+                print(f"ERROR: branch path points to root: {rel!r}")
+                sys.exit(1)
+            if not abs_branch.is_dir():
+                print(f"ERROR: branch directory not found: {abs_branch}")
+                sys.exit(1)
+            branch_paths.append(abs_branch)
+
+        # Check for overlapping branch paths
+        for i, p1 in enumerate(branch_paths):
+            for j, p2 in enumerate(branch_paths):
+                if i != j:
+                    try:
+                        p2.relative_to(p1)
+                        print(
+                            f"ERROR: branch paths overlap: {p1} contains {p2}"
+                        )
+                        sys.exit(1)
+                    except ValueError:
+                        pass
+
+        print(f"\n{'=' * 55}")
+        print("  MemPalace Mine — Multi-Wing")
+        print(f"{'=' * 55}")
+        print(f"  Root:    {project_path}")
+        print(f"  Branches: {len(branch_paths)}")
+        print(f"  Palace:  {palace_path}")
+        print(f"{'─' * 55}\n")
+
+        for abs_branch in branch_paths:
+            mine(
+                project_dir=str(abs_branch),
+                palace_path=palace_path,
+                wing_override=None,
+                agent=agent,
+                limit=limit,
+                dry_run=dry_run,
+                respect_gitignore=respect_gitignore,
+                include_ignored=include_ignored,
+            )
+        return
+
+    # ------------------------------------------------------------------
+    # Single-wing path (original behaviour)
+    # ------------------------------------------------------------------
+    wing = wing_override or config.get("wing") or project_path.name
     rooms = config.get("rooms", [{"name": "general", "description": "All project files"}])
 
     files = scan_project(

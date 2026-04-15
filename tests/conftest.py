@@ -13,13 +13,24 @@ instead of the real user profile.
 import os
 import shutil
 import tempfile
+from unittest.mock import patch
 
 # ── Isolate HOME before any mempalace imports ──────────────────────────
 _original_env = {}
 _session_tmp = tempfile.mkdtemp(prefix="mempalace_session_")
 
+# Preserve HuggingFace / sentence-transformers cache dirs so that
+# already-downloaded models (e.g. Qwen3-Embedding-4B) are still found
+# even after HOME is redirected.  Tests that call mine() are expected to
+# mock the embedding function anyway (see _mock_embedding_fn below).
 for _var in ("HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH"):
     _original_env[_var] = os.environ.get(_var)
+
+_real_home = _original_env.get("USERPROFILE") or _original_env.get("HOME") or ""
+for _cache_var in ("HF_HOME", "HUGGINGFACE_HUB_CACHE", "SENTENCE_TRANSFORMERS_HOME"):
+    if not os.environ.get(_cache_var):
+        _default = os.path.join(_real_home, ".cache", "huggingface")
+        os.environ[_cache_var] = _default
 
 os.environ["HOME"] = _session_tmp
 os.environ["USERPROFILE"] = _session_tmp
@@ -27,11 +38,80 @@ os.environ["HOMEDRIVE"] = os.path.splitdrive(_session_tmp)[0] or "C:"
 os.environ["HOMEPATH"] = os.path.splitdrive(_session_tmp)[1] or _session_tmp
 
 # Now it is safe to import mempalace modules that trigger initialisation.
-import chromadb  # noqa: E402
 import pytest  # noqa: E402
 
 from mempalace.config import MempalaceConfig  # noqa: E402
 from mempalace.knowledge_graph import KnowledgeGraph  # noqa: E402
+from mempalace.palace import get_collection  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _mock_embedding_fn():
+    """Stub out embedding loading for all tests.
+
+    We must patch both paths:
+    1) ``palace._get_embedding_fn`` (used by miner/searcher/palace helpers)
+    2) ``embedding.get_embedding_function`` (used directly by mcp_server)
+
+    This guarantees tests never load Qwen3-Embedding-4B and never trigger
+    ChromaDB's fallback ONNX download.
+    """
+    import mempalace.embedding as _embedding
+    import mempalace.palace as _palace
+    import chromadb.utils.embedding_functions as _chroma_efs
+    from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
+
+    class _FakeEmbedding(EmbeddingFunction):
+        """Fast deterministic embedding for tests.
+
+        Produces normalized bag-of-words hash vectors so semantic tests keep
+        meaningful ordering (unlike all-zero vectors), while never loading any
+        external model.
+        """
+
+        _dims = 128
+
+        def __call__(self, input: Documents) -> Embeddings:
+            import hashlib
+            import math
+            import re
+
+            vectors = []
+            for text in input:
+                vec = [0.0] * self._dims
+                tokens = re.findall(r"\w+", (text or "").lower())
+                if not tokens:
+                    vectors.append(vec)
+                    continue
+
+                for tok in tokens:
+                    h = hashlib.md5(tok.encode("utf-8")).digest()
+                    idx = int.from_bytes(h[:2], "big") % self._dims
+                    sign = 1.0 if (h[2] % 2 == 0) else -1.0
+                    vec[idx] += sign
+
+                norm = math.sqrt(sum(v * v for v in vec))
+                if norm > 0:
+                    vec = [v / norm for v in vec]
+                vectors.append(vec)
+
+            return vectors
+
+    _fake = _FakeEmbedding()
+
+    _palace._embedding_fn_cache = None
+    _palace._embedding_fn_loaded = False
+
+    with (
+        patch.object(_palace, "_get_embedding_fn", new=lambda: _fake),
+        patch.object(_embedding, "get_embedding_function", new=lambda *args, **kwargs: _fake),
+        patch.object(_chroma_efs, "DefaultEmbeddingFunction", new=lambda *args, **kwargs: _fake),
+    ):
+        yield
+
+    _palace._embedding_fn_cache = None
+    _palace._embedding_fn_loaded = False
+    _palace._client_cache.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -100,11 +180,9 @@ def config(tmp_dir, palace_path):
 @pytest.fixture
 def collection(palace_path):
     """A ChromaDB collection pre-seeded in the temp palace."""
-    client = chromadb.PersistentClient(path=palace_path)
-    col = client.get_or_create_collection("mempalace_drawers")
+    col = get_collection(palace_path)
     yield col
-    client.delete_collection("mempalace_drawers")
-    del client
+    del col
 
 
 @pytest.fixture

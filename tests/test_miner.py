@@ -2,8 +2,10 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import chromadb
+import pytest
 import yaml
 
 from mempalace.miner import mine, scan_project
@@ -214,8 +216,8 @@ def test_file_already_mined_check_mtime():
     try:
         palace_path = os.path.join(tmpdir, "palace")
         os.makedirs(palace_path)
-        client = chromadb.PersistentClient(path=palace_path)
-        col = client.get_or_create_collection("mempalace_drawers")
+        from mempalace.palace import get_collection
+        col = get_collection(palace_path)
 
         test_file = os.path.join(tmpdir, "test.txt")
         with open(test_file, "w") as f:
@@ -258,5 +260,131 @@ def test_file_already_mined_check_mtime():
         assert file_already_mined(col, "/fake/no_mtime.txt", check_mtime=True) is False
     finally:
         # Release ChromaDB file handles before cleanup (required on Windows)
-        del col, client
+        col = None  # noqa: F841
         shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+# ── Multi-wing manifest tests ────────────────────────────────────────────
+
+
+def _write_single_wing_config(directory: Path, wing: str, rooms=None):
+    if rooms is None:
+        rooms = [{"name": "general", "description": "General", "keywords": []}]
+    with open(directory / "mempalace.yaml", "w") as f:
+        yaml.dump({"wing": wing, "rooms": rooms}, f)
+
+
+def _write_multi_wing_manifest(root: Path, branches: list):
+    """branches: list of {"path": rel, "wing": name}"""
+    with open(root / "mempalace.yaml", "w") as f:
+        yaml.dump({"mode": "multi_wing", "branches": branches}, f)
+
+
+def test_mine_multi_wing_calls_each_branch(tmp_path):
+    """mine() with multi-wing manifest should invoke itself for each branch."""
+    sub_a = tmp_path / "proj_a"
+    sub_b = tmp_path / "proj_b"
+    sub_a.mkdir()
+    sub_b.mkdir()
+    write_file(sub_a / "app.py", "def foo(): pass\n" * 20)
+    write_file(sub_b / "app.py", "def bar(): pass\n" * 20)
+    _write_single_wing_config(sub_a, "ProjectA")
+    _write_single_wing_config(sub_b, "ProjectB")
+    _write_multi_wing_manifest(tmp_path, [
+        {"path": "proj_a", "wing": "ProjectA"},
+        {"path": "proj_b", "wing": "ProjectB"},
+    ])
+
+    palace_path = tmp_path / "palace"
+    mine(str(tmp_path), str(palace_path))
+
+    client = chromadb.PersistentClient(path=str(palace_path))
+    col = client.get_collection("mempalace_drawers")
+    metas = col.get(limit=1000, include=["metadatas"])["metadatas"]
+    wings = {m["wing"] for m in metas}
+    assert "ProjectA" in wings
+    assert "ProjectB" in wings
+    del col, client
+
+
+def test_mine_multi_wing_root_files_not_indexed(tmp_path):
+    """Root-level files must not be indexed in multi-wing mode."""
+    sub_a = tmp_path / "proj_a"
+    sub_a.mkdir()
+    write_file(sub_a / "app.py", "def foo(): pass\n" * 20)
+    _write_single_wing_config(sub_a, "ProjectA")
+
+    # Root-level file that should be ignored
+    write_file(tmp_path / "root_readme.md", "# Root readme\n" * 20)
+
+    _write_multi_wing_manifest(tmp_path, [{"path": "proj_a", "wing": "ProjectA"}])
+
+    palace_path = tmp_path / "palace"
+    mine(str(tmp_path), str(palace_path))
+
+    client = chromadb.PersistentClient(path=str(palace_path))
+    col = client.get_collection("mempalace_drawers")
+    metas = col.get(limit=1000, include=["metadatas"])["metadatas"]
+    source_files = [m["source_file"] for m in metas]
+    assert not any("root_readme" in sf for sf in source_files)
+    del col, client
+
+
+def test_mine_multi_wing_with_wing_override_exits(tmp_path):
+    """--wing must be rejected when root config is a multi-wing manifest."""
+    sub_a = tmp_path / "proj_a"
+    sub_a.mkdir()
+    _write_single_wing_config(sub_a, "ProjectA")
+    _write_multi_wing_manifest(tmp_path, [{"path": "proj_a", "wing": "ProjectA"}])
+
+    with pytest.raises(SystemExit):
+        mine(str(tmp_path), str(tmp_path / "palace"), wing_override="override_wing")
+
+
+def test_mine_multi_wing_missing_branch_dir_exits(tmp_path):
+    """mine() must exit if a declared branch directory does not exist."""
+    _write_multi_wing_manifest(tmp_path, [{"path": "nonexistent", "wing": "X"}])
+
+    with pytest.raises(SystemExit):
+        mine(str(tmp_path), str(tmp_path / "palace"))
+
+
+def test_mine_multi_wing_empty_branches_exits(tmp_path):
+    """mine() must exit when multi_wing manifest has no branches."""
+    with open(tmp_path / "mempalace.yaml", "w") as f:
+        yaml.dump({"mode": "multi_wing", "branches": []}, f)
+
+    with pytest.raises(SystemExit):
+        mine(str(tmp_path), str(tmp_path / "palace"))
+
+
+def test_mine_multi_wing_overlapping_branches_exits(tmp_path):
+    """mine() must exit when branch paths overlap (ancestor–descendant)."""
+    parent = tmp_path / "parent"
+    child = parent / "child"
+    child.mkdir(parents=True)
+    _write_single_wing_config(parent, "Parent")
+    _write_single_wing_config(child, "Child")
+    _write_multi_wing_manifest(tmp_path, [
+        {"path": "parent", "wing": "Parent"},
+        {"path": "parent/child", "wing": "Child"},
+    ])
+
+    with pytest.raises(SystemExit):
+        mine(str(tmp_path), str(tmp_path / "palace"))
+
+
+def test_mine_single_wing_unchanged(tmp_path):
+    """Existing single-wing behaviour must be completely unaffected."""
+    write_file(tmp_path / "src" / "app.py", "def main(): pass\n" * 20)
+    _write_single_wing_config(tmp_path, "MyProject")
+
+    palace_path = tmp_path / "palace"
+    mine(str(tmp_path), str(palace_path))
+
+    client = chromadb.PersistentClient(path=str(palace_path))
+    col = client.get_collection("mempalace_drawers")
+    assert col.count() > 0
+    metas = col.get(limit=100, include=["metadatas"])["metadatas"]
+    assert all(m["wing"] == "MyProject" for m in metas)
+    del col, client

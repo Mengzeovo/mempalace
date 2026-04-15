@@ -1,8 +1,8 @@
 import os
 import tempfile
 import shutil
-import chromadb
 from mempalace.convo_miner import mine_convos
+from mempalace.palace import open_collection
 
 
 def test_convo_mining():
@@ -15,8 +15,10 @@ def test_convo_mining():
     palace_path = os.path.join(tmpdir, "palace")
     mine_convos(tmpdir, palace_path, wing="test_convos")
 
-    client = chromadb.PersistentClient(path=palace_path)
-    col = client.get_collection("mempalace_drawers")
+    # Use palace.open_collection so the same embedding function (_FakeEmbedding
+    # injected by conftest) is used for both write and query — avoids dimension
+    # mismatch when ChromaDB's default ONNX embedding is not available.
+    col = open_collection(palace_path)
     assert col.count() >= 2
 
     # Verify search works

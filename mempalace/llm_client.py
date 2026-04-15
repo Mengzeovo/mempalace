@@ -47,7 +47,7 @@ class LLMClient:
         MEMPALACE_LLM_MODEL
     """
 
-    _MAX_RETRIES = 2
+    _MAX_RETRIES = 10
     _RETRY_DELAY = 2.0  # seconds between retries
 
     def __init__(self, config: MempalaceConfig | None = None):
@@ -123,7 +123,8 @@ class LLMClient:
     def parse_json_response(self, text: str) -> dict[str, Any]:
         """Parse a JSON object from an LLM response string.
 
-        Two-stage fallback:
+        Three-stage fallback:
+          0. Strip LLM "thinking" blocks (e.g. DeepSeek R1 ``<think ...>``)
           1. Try ``json.loads(text.strip())`` directly.
           2. Use regex to extract the first ``{...}`` block and parse it.
 
@@ -136,6 +137,16 @@ class LLMClient:
         Raises:
             ValueError: If no valid JSON object could be extracted.
         """
+        text = text.strip()
+
+        # Stage 0: Strip LLM "thinking" blocks (DeepSeek R1, QwQ, etc.)
+        # Handles formats:
+        #   <think ...>...</think)>  -- standard HTML-style
+        #   <think\\n...\\n</think)  -- DeepSeek R1 (no > on open, ) on close)
+        #   <|im_start|>think...<|im_end|> -- ChatML
+        text = re.sub(r"<think\b[^>]*>.*?</think\s*>", "", text, flags=re.DOTALL)
+        text = re.sub(r"<think\b.*?</think\)", "", text, flags=re.DOTALL)
+        text = re.sub(r"<\|im_start\|>think\b.*?<\|im_end\|>", "", text, flags=re.DOTALL)
         text = text.strip()
 
         # Stage 1: direct parse

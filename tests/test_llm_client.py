@@ -172,3 +172,36 @@ def test_parse_json_response_nested_braces():
     text = '{"a": {"b": {"c": 1}}}'
     data = client.parse_json_response(text)
     assert data["a"]["b"]["c"] == 1
+
+
+def test_parse_json_response_strips_think_block_deepseek():
+    """DeepSeek R1 style: <think ...>reasoning</think) before JSON."""
+    client = _make_client()
+    text = '<think\n让我分析一下目录结构...\n这是一个项目。\n</think)\n\n{"wing_name": "测试", "rooms": []}'
+    data = client.parse_json_response(text)
+    assert data["wing_name"] == "测试"
+    assert data["rooms"] == []
+
+
+def test_parse_json_response_strips_think_block_chatml():
+    """ChatML style: <|im_start|>think...<|im_end|> before JSON."""
+    client = _make_client()
+    text = '<|im_start|>think\nreasoning here\n<|im_end|>\n{"key": "value"}'
+    data = client.parse_json_response(text)
+    assert data["key"] == "value"
+
+
+def test_parse_json_response_think_block_with_braces():
+    """Thinking block containing curly braces should not break JSON extraction."""
+    client = _make_client()
+    text = '<think\nI think the structure is {a: 1, b: 2}\n</think)\n{"wing_name": "项目", "rooms": []}'
+    data = client.parse_json_response(text)
+    assert data["wing_name"] == "项目"
+
+
+def test_parse_json_response_no_think_block_unchanged():
+    """Normal responses without think blocks should work as before."""
+    client = _make_client()
+    text = '{"wing_name": "项目", "rooms": []}'
+    data = client.parse_json_response(text)
+    assert data["wing_name"] == "项目"
