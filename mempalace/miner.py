@@ -663,7 +663,8 @@ def mine(
             files_skipped += 1
         else:
             total_drawers += drawers
-            room_counts[room] += 1
+            if room is not None:
+                room_counts[room] += 1
             if not dry_run:
                 print(f"  ✓ [{i:4}/{len(files)}] {filepath.name[:50]:50} +{drawers}")
 
